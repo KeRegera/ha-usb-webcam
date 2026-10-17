@@ -70,8 +70,8 @@ Unter **Netzwerk** Port `8554` freigeben, dann ist der Stream z. B. in VLC unter
 **Einstellungen → Geräte & Dienste → Integration hinzufügen → Generic Camera**, dann die beiden
 Adressen aus dem Log der App eintragen:
 
-- Standbild-URL: `http://<hostname>:1984/api/frame.jpeg?src=webcam`
-- Stream-Quelle: `rtsp://<hostname>:8554/webcam?video&audio=all`
+- Standbild-URL: `http://<IP-aus-dem-Log>:1984/api/frame.jpeg?src=webcam`
+- Stream-Quelle: `rtsp://<IP-aus-dem-Log>:8554/webcam?video&audio=all`
 - Erweitert: RTSP-Transport `TCP`, SSL-Prüfung aus
 
 ## Fehlersuche

@@ -1,6 +1,6 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 name: USB Webcam
-version: "1.0.1"
+version: "1.0.2"
 slug: usb_webcam
 description: USB-Webcam (bis 4K, 30/60 fps, mit Ton) als normale Kamera-Entität in Home Assistant
 url: "https://github.com/KeRegera/ha-usb-webcam/tree/main/usb_webcam"

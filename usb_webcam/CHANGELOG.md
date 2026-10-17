@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- WebRTC-Fehler "Failed to resolve hostname" behoben: Kamera wird jetzt über die interne IP der App statt über den Hostnamen angebunden
+- Bestehende Kamera wird beim Start automatisch auf die neue Adresse umgestellt
+
 ## 1.0.1
 
 - Build-Fehler behoben (Exit-Code 141 im Dockerfile)

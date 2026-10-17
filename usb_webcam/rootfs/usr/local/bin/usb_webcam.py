@@ -568,14 +568,28 @@ def ha_api(method: str, path: str, body: dict | None = None):
     return supervisor_request(method, "/core/api" + path, body)
 
 
-def own_hostname() -> str:
+def own_address() -> str:
+    """Interne IP der App im Home-Assistant-Netz.
+
+    Bewusst die IP statt des Hostnamens: Der in Home Assistant eingebaute
+    go2rtc/ffmpeg (WebRTC) kann App-Hostnamen nicht immer auflösen
+    ("Name has no usable address"). Ändert sich die IP nach einem Neustart,
+    aktualisiert ensure_registration() die Kamera automatisch.
+    """
+    if TOKEN:
+        try:
+            data = supervisor_request("GET", "/addons/self/info", timeout=15)
+            ip = (data.get("data") or {}).get("ip_address")
+            if ip and ip not in ("0.0.0.0", "127.0.0.1"):
+                return ip
+        except Exception as err:  # noqa: BLE001
+            log("debug", f"IP über Supervisor nicht ermittelbar: {err}")
     try:
-        data = supervisor_request("GET", "/addons/self/info", timeout=15)
-        host = (data.get("data") or {}).get("hostname")
-        if host:
-            return host
-    except Exception as err:  # noqa: BLE001
-        log("debug", f"Hostname über Supervisor nicht ermittelbar: {err}")
+        ip = socket.gethostbyname(socket.gethostname())
+        if ip and not ip.startswith("127."):
+            return ip
+    except OSError:
+        pass
     return socket.gethostname()
 
 
@@ -863,7 +877,7 @@ def main() -> int:
         json.dump(config, fh, indent=2)  # JSON ist gültiges YAML
     log("debug", f"go2rtc-Konfiguration:\n{json.dumps(config, indent=2)}")
 
-    host = own_hostname() if TOKEN else socket.gethostname()
+    host = own_address()
     name = opts["stream_name"]
     cred = ""
     if opts.get("rtsp_username") and opts.get("rtsp_password"):
