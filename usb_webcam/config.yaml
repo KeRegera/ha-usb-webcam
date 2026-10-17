@@ -1,0 +1,76 @@
+# https://developers.home-assistant.io/docs/apps/configuration
+name: USB Webcam
+version: "1.0.0"
+slug: usb_webcam
+description: USB-Webcam (bis 4K, 30/60 fps, mit Ton) als normale Kamera-Entität in Home Assistant
+url: "https://github.com/KeRegera/ha-usb-webcam/tree/main/usb_webcam"
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+
+# Zugriff auf /dev/video* und /dev/dri (Hardware-Encoder) + Audio-System von HA
+video: true
+audio: true
+
+# Supervisor-/Core-API für die automatische Einrichtung der Kamera-Entität
+hassio_api: true
+homeassistant_api: true
+
+# go2rtc-Weboberfläche direkt in der Seitenleiste / im App-Tab "Web-UI öffnen"
+ingress: true
+ingress_port: 1984
+panel_icon: mdi:webcam
+panel_title: USB Webcam
+
+# Optional nach außen freigeben (standardmäßig aus, damit nichts mit Frigate & Co. kollidiert)
+ports:
+  8554/tcp: null
+  1984/tcp: null
+ports_description:
+  8554/tcp: RTSP-Stream (z. B. für VLC, Frigate, Blue Iris)
+  1984/tcp: go2rtc Weboberfläche und API
+
+options:
+  video_device: auto
+  resolution: auto
+  fps: 30
+  input_format: auto
+  encoder: auto
+  output_resolution: source
+  bitrate_mbps: 0
+  audio: true
+  audio_source: ""
+  camera_name: USB Webcam
+  stream_name: webcam
+  auto_register: true
+  always_on: false
+  v4l2_controls:
+    - power_line_frequency=1
+  rtsp_username: ""
+  rtsp_password: ""
+  custom_ffmpeg_command: ""
+  log_level: info
+
+schema:
+  video_device: str
+  resolution: str
+  fps: int(5,60)
+  input_format: list(auto|h264|mjpeg|nv12|yuyv422)
+  encoder: list(auto|copy|vaapi|v4l2m2m|software)
+  output_resolution: str
+  bitrate_mbps: int(0,80)
+  audio: bool
+  audio_source: str?
+  camera_name: str
+  stream_name: match(^[A-Za-z0-9_-]+$)
+  auto_register: bool
+  always_on: bool
+  v4l2_controls:
+    - str?
+  rtsp_username: str?
+  rtsp_password: password?
+  custom_ffmpeg_command: str?
+  log_level: list(debug|info|warning|error)

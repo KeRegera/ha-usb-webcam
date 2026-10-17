@@ -1,0 +1,58 @@
+configuration:
+  video_device:
+    name: Video device
+    description: "auto = detect camera automatically, otherwise e.g. /dev/video0"
+  resolution:
+    name: Camera resolution
+    description: "auto = highest. Or e.g. 3840x2160, 1920x1080, 4k, 1080p"
+  fps:
+    name: Frames per second
+    description: "Desired frame rate, e.g. 30 or 60"
+  input_format:
+    name: Camera format
+    description: "auto recommended. h264 = no re-encoding needed (if supported), mjpeg = typical for 4K webcams"
+  encoder:
+    name: Encoder
+    description: "auto = pick best. copy = pass camera H.264 through, vaapi = Intel/AMD GPU, v4l2m2m = Raspberry Pi 4 (max 1080p), software = CPU"
+  output_resolution:
+    name: Output resolution
+    description: "source = same as camera. To reduce load e.g. 1080p"
+  bitrate_mbps:
+    name: Bitrate (Mbit/s)
+    description: "0 = automatic"
+  audio:
+    name: Stream audio
+    description: Include the camera microphone
+  audio_source:
+    name: Audio source
+    description: "Empty = automatic (USB microphone). Names are shown in the app log"
+  camera_name:
+    name: Camera name
+    description: Entity name in Home Assistant
+  stream_name:
+    name: Stream name
+    description: Stream name in go2rtc / RTSP URL
+  auto_register:
+    name: Create camera in Home Assistant
+    description: Creates a Generic Camera entity once
+  always_on:
+    name: Keep camera always on
+    description: "Instant start but permanent load. Off = start on demand"
+  v4l2_controls:
+    name: Camera controls (V4L2)
+    description: "e.g. power_line_frequency=1 (50 Hz anti-flicker)"
+  rtsp_username:
+    name: RTSP username
+    description: Optional, only if port 8554 is exposed
+  rtsp_password:
+    name: RTSP password
+    description: Optional, only if port 8554 is exposed
+  custom_ffmpeg_command:
+    name: Custom ffmpeg command
+    description: "Experts only. Replaces auto detection. Must end with '-f rtsp {output}'"
+  log_level:
+    name: Log level
+    description: "debug shows all camera modes and the generated config"
+network:
+  8554/tcp: RTSP stream (VLC, Frigate, …)
+  1984/tcp: go2rtc web UI / API
