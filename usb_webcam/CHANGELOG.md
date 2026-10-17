@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Build-Fehler behoben (Exit-Code 141 im Dockerfile)
+
 ## 1.0.0
 
 - Erste Version

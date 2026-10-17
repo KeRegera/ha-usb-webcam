@@ -10,7 +10,7 @@ ARG TARGETARCH
 # Pflicht: ffmpeg (inkl. VAAPI / V4L2-M2M / libx264 / libopus), V4L2-Tools, Python
 RUN apk add --no-cache ffmpeg v4l-utils python3 \
     && command -v v4l2-ctl \
-    && ffmpeg -hide_banner -version | head -n 1
+    && ffmpeg -hide_banner -version > /dev/null
 
 # Optional: PulseAudio-Client (Mikrofon-Erkennung), WebSocket (Entität umbenennen),
 # Intel/AMD-VAAPI-Treiber (nur x86_64). Fehlt eins, läuft die App trotzdem.
