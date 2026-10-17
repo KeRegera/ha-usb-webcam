@@ -38,6 +38,21 @@ mit voller Bildrate und Ton – genau wie bei einer IP-Kamera.
   kodiert der Hardware-Encoder flüssig. Software-4K schafft der Pi nicht (die App warnt im Log).
 - **Intel-/AMD-Mini-PC:** 4K30 per VAAPI ist kein Problem.
 
+## Datum und Uhrzeit im Bild
+
+Standardmäßig blendet die App oben links Datum und Uhrzeit ein (z. B. `17.10.2026 20:49:05`).
+Weil der Zeitstempel direkt ins Videobild geschrieben wird, steht er auch in **jeder Aufnahme**
+und jedem Standbild – egal ob aus Home Assistant, Frigate oder VLC. Es gilt die Zeitzone von
+Home Assistant.
+
+- `timestamp_position`: `top_left`, `top_right`, `bottom_left`, `bottom_right`
+- `timestamp_format`: z. B. `%a %d.%m.%Y %H:%M:%S` für den Wochentag dazu
+- Ausschalten mit `timestamp: false`
+
+Hinweis: Für die Einblendung muss das Video neu kodiert werden. Das reine Durchreichen (`copy`)
+ist dann nicht möglich. Schafft das Gerät die volle Auflösung nicht (z. B. 4K auf dem
+Raspberry Pi 4), wechselt die App automatisch auf 1080p.
+
 ## Optionen
 
 | Option | Bedeutung |
@@ -56,6 +71,7 @@ mit voller Bildrate und Ton – genau wie bei einer IP-Kamera.
 | `always_on` | Stream dauerhaft laufen lassen (schnellerer Start, aber Dauerlast) |
 | `v4l2_controls` | Kamera-Einstellungen, Standard `power_line_frequency=1` (50 Hz gegen Flimmern) |
 | `rtsp_username` / `rtsp_password` | Schutz, falls Port 8554 freigegeben wird |
+| `timestamp` / `timestamp_position` / `timestamp_format` | Datum/Uhrzeit einblenden, Position, Format |
 | `custom_ffmpeg_command` | Nur für Experten, ersetzt die Automatik (muss `-f rtsp {output}` enthalten) |
 
 ## Zugriff von außerhalb von Home Assistant

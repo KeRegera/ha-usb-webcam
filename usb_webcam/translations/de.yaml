@@ -50,6 +50,15 @@ configuration:
   custom_ffmpeg_command:
     name: Eigener ffmpeg-Befehl
     description: "Nur für Experten. Ersetzt die Automatik komplett. Muss mit '-f rtsp {output}' enden"
+  timestamp:
+    name: Datum und Uhrzeit einblenden
+    description: "Brennt Datum/Uhrzeit ins Videobild – steht damit auch in jeder Aufnahme und jedem Standbild"
+  timestamp_position:
+    name: Position des Zeitstempels
+    description: "top_left = oben links, top_right = oben rechts, bottom_left = unten links, bottom_right = unten rechts"
+  timestamp_format:
+    name: Format des Zeitstempels
+    description: "Standard %d.%m.%Y %H:%M:%S -> 17.10.2026 20:49:05. Mit %a z. B. auch den Wochentag"
   log_level:
     name: Log-Level
     description: "debug zeigt alle Kameramodi und die erzeugte Konfiguration"

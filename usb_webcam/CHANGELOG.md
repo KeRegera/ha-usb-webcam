@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0
+
+- Neu: Datum und Uhrzeit werden ins Videobild eingeblendet (Optionen timestamp, timestamp_position, timestamp_format) – damit auch in Aufnahmen und Standbildern
+- Neu: Schafft das Gerät die volle Auflösung nicht (z. B. 4K auf dem Raspberry Pi), wechselt die App automatisch auf 1080p statt zu ruckeln
+
 ## 1.0.2
 
 - WebRTC-Fehler "Failed to resolve hostname" behoben: Kamera wird jetzt über die interne IP der App statt über den Hostnamen angebunden

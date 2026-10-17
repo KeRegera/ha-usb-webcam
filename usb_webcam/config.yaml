@@ -1,6 +1,6 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 name: USB Webcam
-version: "1.0.2"
+version: "1.1.0"
 slug: usb_webcam
 description: USB-Webcam (bis 4K, 30/60 fps, mit Ton) als normale Kamera-Entität in Home Assistant
 url: "https://github.com/KeRegera/ha-usb-webcam/tree/main/usb_webcam"
@@ -52,6 +52,9 @@ options:
   rtsp_username: ""
   rtsp_password: ""
   custom_ffmpeg_command: ""
+  timestamp: true
+  timestamp_position: top_left
+  timestamp_format: "%d.%m.%Y %H:%M:%S"
   log_level: info
 
 schema:
@@ -73,4 +76,7 @@ schema:
   rtsp_username: str?
   rtsp_password: password?
   custom_ffmpeg_command: str?
+  timestamp: bool
+  timestamp_position: list(top_left|top_right|bottom_left|bottom_right)
+  timestamp_format: str
   log_level: list(debug|info|warning|error)

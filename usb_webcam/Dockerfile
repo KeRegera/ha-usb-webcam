@@ -12,6 +12,9 @@ RUN apk add --no-cache ffmpeg v4l-utils python3 \
     && command -v v4l2-ctl \
     && ffmpeg -hide_banner -version > /dev/null
 
+# Schrift für die Datum/Uhrzeit-Einblendung
+RUN apk add --no-cache font-dejavu || apk add --no-cache ttf-dejavu || echo "Hinweis: keine DejaVu-Schrift"
+
 # Optional: PulseAudio-Client (Mikrofon-Erkennung), WebSocket (Entität umbenennen),
 # Intel/AMD-VAAPI-Treiber (nur x86_64). Fehlt eins, läuft die App trotzdem.
 RUN for pkg in pulseaudio-utils alsa-plugins-pulse py3-websocket-client; do \

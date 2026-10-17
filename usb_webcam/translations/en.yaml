@@ -50,6 +50,15 @@ configuration:
   custom_ffmpeg_command:
     name: Custom ffmpeg command
     description: "Experts only. Replaces auto detection. Must end with '-f rtsp {output}'"
+  timestamp:
+    name: Show date and time
+    description: Burns date/time into the video so it is part of every recording and snapshot
+  timestamp_position:
+    name: Timestamp position
+    description: "top_left, top_right, bottom_left, bottom_right"
+  timestamp_format:
+    name: Timestamp format
+    description: "strftime format, default %d.%m.%Y %H:%M:%S"
   log_level:
     name: Log level
     description: "debug shows all camera modes and the generated config"

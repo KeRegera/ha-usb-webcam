@@ -31,6 +31,7 @@ OPTIONS_PATH = os.environ.get("USBCAM_OPTIONS", "/data/options.json")
 STATE_PATH = os.environ.get("USBCAM_STATE", "/data/state.json")
 GO2RTC_CONFIG = os.environ.get("USBCAM_GO2RTC_CONFIG", "/tmp/go2rtc.yaml")
 GO2RTC_BIN = os.environ.get("USBCAM_GO2RTC_BIN", "go2rtc")
+TIMESTAMP_FILE = os.environ.get("USBCAM_TIMESTAMP_FILE", "/tmp/usb_webcam_timestamp.txt")
 SUPERVISOR_URL = os.environ.get("USBCAM_SUPERVISOR_URL", "http://supervisor")
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
@@ -56,6 +57,9 @@ DEFAULTS = {
     "rtsp_username": "",
     "rtsp_password": "",
     "custom_ffmpeg_command": "",
+    "timestamp": True,
+    "timestamp_position": "top_left",
+    "timestamp_format": "%d.%m.%Y %H:%M:%S",
     "log_level": "info",
 }
 
@@ -369,12 +373,15 @@ def benchmark_software(width: int, height: int, fps: float, bitrate: int) -> flo
     return frames / elapsed if rc == 0 and elapsed > 0 else 0.0
 
 
-def choose_encoder(opt: str, mode: dict, out_w: int, out_h: int, caps: FFmpegCaps, bitrate: int) -> str:
+def choose_encoder(opt: str, mode: dict, out_w: int, out_h: int, caps: FFmpegCaps, bitrate: int,
+                   overlay: bool = False) -> tuple[str, bool]:
+    """Liefert (encoder, schnell_genug)."""
     same_size = (out_w, out_h) == (mode["width"], mode["height"])
-    if mode["fourcc"] == "H264" and same_size and opt in ("auto", "copy"):
-        return "copy"
+    if mode["fourcc"] == "H264" and same_size and opt in ("auto", "copy") and not overlay:
+        return "copy", True
     if opt == "copy":
-        log("warning", "encoder=copy geht nur mit H.264-Kameraformat ohne Skalierung – wähle automatisch")
+        reason = "Zeitstempel-Einblendung aktiv" if overlay else "Kamera liefert kein H.264 oder Skalierung aktiv"
+        log("warning", f"encoder=copy nicht möglich ({reason}) – wähle automatisch")
         opt = "auto"
 
     order = ["vaapi", "v4l2m2m", "software"] if opt == "auto" else [opt]
@@ -390,7 +397,7 @@ def choose_encoder(opt: str, mode: dict, out_w: int, out_h: int, caps: FFmpegCap
             break
         ok, err = test_encoder(enc, out_w, out_h, mode["fps"])
         if ok:
-            return enc
+            return enc, True
         log("info" if opt == "auto" else "warning",
             f"Hardware-Encoder {enc} bei {out_w}x{out_h} nicht nutzbar{': ' + err if err else ''}")
 
@@ -398,11 +405,45 @@ def choose_encoder(opt: str, mode: dict, out_w: int, out_h: int, caps: FFmpegCap
     if speed and speed < mode["fps"] * 0.95:
         log("warning",
             f"CPU schafft Software-Kodierung bei {out_w}x{out_h} nur mit ca. {speed:.1f} fps "
-            f"(gewünscht {mode['fps']:g}). Stream wird ruckeln/verzögern! Abhilfe: Kamera mit H.264-Ausgabe, "
-            f"output_resolution verkleinern (z. B. 1080p) oder fps reduzieren.")
-    elif speed:
+            f"(gewünscht {mode['fps']:g}).")
+        return "software", False
+    if speed:
         log("info", f"Software-Kodierung: ca. {speed:.0f} fps möglich bei {out_w}x{out_h}")
-    return "software"
+    return "software", True
+
+
+def find_font() -> str | None:
+    for pattern in ("/usr/share/fonts/**/DejaVuSans-Bold.ttf", "/usr/share/fonts/**/DejaVuSans.ttf",
+                    "/usr/share/fonts/**/*.ttf"):
+        hits = sorted(glob.glob(pattern, recursive=True))
+        if hits:
+            return hits[0]
+    return None
+
+
+def build_timestamp_filter(opts: dict, frame_h: int, textfile: str) -> str | None:
+    """drawtext-Filter für Datum/Uhrzeit. Der Text kommt aus einer Datei, damit
+    weder Leerzeichen noch Doppelpunkte im ffmpeg-/go2rtc-Befehl escaped werden müssen."""
+    if not opts.get("timestamp"):
+        return None
+    fmt = str(opts.get("timestamp_format") or "%d.%m.%Y %H:%M:%S")
+    # In der drawtext-Expansion trennt ":" Argumente -> im Format escapen
+    fmt = fmt.replace("\\", "\\\\").replace(":", "\\:").replace("}", "")
+    with open(textfile, "w", encoding="utf-8") as fh:
+        fh.write("%{localtime:" + fmt + "}")
+    size = max(14, round(frame_h / 30))
+    pad = max(8, round(frame_h / 60))
+    pos = {
+        "top_left": (f"{pad}", f"{pad}"),
+        "top_right": (f"w-tw-{pad}", f"{pad}"),
+        "bottom_left": (f"{pad}", f"h-th-{pad}"),
+        "bottom_right": (f"w-tw-{pad}", f"h-th-{pad}"),
+    }.get(opts.get("timestamp_position"), (f"{pad}", f"{pad}"))
+    font = find_font()
+    parts = ["drawtext=" + (f"fontfile={font}:" if font else ""),
+             f"textfile={textfile}:expansion=normal:fontsize={size}:fontcolor=white",
+             f":box=1:boxcolor=black@0.5:boxborderw={max(4, size // 4)}:x={pos[0]}:y={pos[1]}"]
+    return "".join(parts)
 
 
 def auto_bitrate(width: int, height: int, fps: float) -> int:
@@ -486,7 +527,7 @@ def video_input_args(device: str, mode: dict, encoder: str) -> list[str]:
 
 def build_ffmpeg_command(video_in: list[str], audio_in: list[str] | None, encoder: str,
                          in_w: int, in_h: int, out_w: int, out_h: int, fps: float,
-                         bitrate: int, opus: bool) -> list[str]:
+                         bitrate: int, opus: bool, overlay: str | None = None) -> list[str]:
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", *video_in]
     if audio_in:
         cmd += audio_in
@@ -495,17 +536,19 @@ def build_ffmpeg_command(video_in: list[str], audio_in: list[str] | None, encode
     gop = str(max(1, round(fps)))
     rate = ["-b:v", f"{bitrate}M", "-maxrate", f"{bitrate}M", "-bufsize", f"{bitrate * 2}M"]
 
+    ov = f"{overlay}," if overlay else ""
     if encoder == "copy":
         cmd += ["-c:v", "copy"]
     elif encoder == "vaapi":
-        vf = "format=nv12,hwupload" + (f",scale_vaapi=w={out_w}:h={out_h}" if scale else "")
+        # drawtext ist ein CPU-Filter -> vor dem Hochladen auf die GPU anwenden
+        vf = ov + "format=nv12,hwupload" + (f",scale_vaapi=w={out_w}:h={out_h}" if scale else "")
         cmd += ["-vf", vf, "-c:v", "h264_vaapi", "-bf", "0", "-g", gop, *rate]
     elif encoder == "v4l2m2m":
-        vf = (f"scale={out_w}:{out_h}:flags=fast_bilinear," if scale else "") + "format=yuv420p"
+        vf = (f"scale={out_w}:{out_h}:flags=fast_bilinear," if scale else "") + ov + "format=yuv420p"
         cmd += ["-vf", vf, "-c:v", "h264_v4l2m2m", "-num_output_buffers", "32",
                 "-num_capture_buffers", "16", "-g", gop, *rate]
     else:
-        vf = (f"scale={out_w}:{out_h}:flags=fast_bilinear," if scale else "") + "format=yuv420p"
+        vf = (f"scale={out_w}:{out_h}:flags=fast_bilinear," if scale else "") + ov + "format=yuv420p"
         cmd += ["-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
                 "-profile:v", "high", "-g", gop, "-keyint_min", gop, "-sc_threshold", "0", *rate]
 
@@ -834,20 +877,43 @@ def main() -> int:
                 log("debug", f"  {fcc} {w}x{h} @ {', '.join(f'{f:g}' for f in fpsl)} fps")
 
         apply_controls(device["path"], opts["v4l2_controls"])
-        mode = choose_mode(device["formats"], opts["resolution"], opts["fps"], opts["input_format"], opts["encoder"])
-        log("info", f"Kameramodus: {mode['fourcc']} {mode['width']}x{mode['height']} @ {mode['fps']:g} fps")
-
-        out_res = parse_resolution(opts["output_resolution"]) if opts["output_resolution"] != "source" else None
-        out_w, out_h = out_res or (mode["width"], mode["height"])
-        if out_w * out_h > mode["width"] * mode["height"]:
-            out_w, out_h = mode["width"], mode["height"]
-        out_w, out_h = out_w - out_w % 2, out_h - out_h % 2
-        bitrate = int(opts["bitrate_mbps"]) or auto_bitrate(out_w, out_h, mode["fps"])
-
+        overlay_on = bool(opts.get("timestamp"))
+        # Mit Einblendung wird ohnehin neu kodiert -> MJPEG bevorzugen (billiger zu dekodieren)
+        mode_enc = "software" if overlay_on and opts["encoder"] in ("auto", "copy") else opts["encoder"]
         caps = FFmpegCaps()
-        encoder = choose_encoder(opts["encoder"], mode, out_w, out_h, caps, bitrate)
+
+        def plan(resolution: str):
+            m = choose_mode(device["formats"], resolution, opts["fps"], opts["input_format"], mode_enc)
+            res = parse_resolution(opts["output_resolution"]) if opts["output_resolution"] != "source" else None
+            ow, oh = res or (m["width"], m["height"])
+            if ow * oh > m["width"] * m["height"]:
+                ow, oh = m["width"], m["height"]
+            ow, oh = ow - ow % 2, oh - oh % 2
+            br = int(opts["bitrate_mbps"]) or auto_bitrate(ow, oh, m["fps"])
+            enc, fast = choose_encoder(opts["encoder"], m, ow, oh, caps, br, overlay_on)
+            return m, ow, oh, br, enc, fast
+
+        mode, out_w, out_h, bitrate, encoder, fast = plan(opts["resolution"])
+        if (not fast and opts["resolution"] == "auto" and opts["output_resolution"] == "source"
+                and mode["width"] * mode["height"] > 1920 * 1080):
+            log("warning", f"{mode['width']}x{mode['height']} ist für dieses Gerät zu viel – "
+                           "wechsle automatisch auf 1080p (mit resolution/output_resolution änderbar)")
+            mode, out_w, out_h, bitrate, encoder, fast = plan("1920x1080")
+        if not fast:
+            log("warning", "Stream wird ruckeln/verzögern! Abhilfe: resolution oder output_resolution "
+                           "verkleinern (z. B. 1080p/720p), fps reduzieren oder Zeitstempel ausschalten.")
+        log("info", f"Kameramodus: {mode['fourcc']} {mode['width']}x{mode['height']} @ {mode['fps']:g} fps")
         log("info", f"Video: {encoder} -> H.264 {out_w}x{out_h} @ {mode['fps']:g} fps"
                     + ("" if encoder == "copy" else f", {bitrate} Mbit/s"))
+
+        overlay = None
+        if overlay_on:
+            # Bei VAAPI wird vor dem Skalieren gezeichnet (Eingangsgröße), sonst danach
+            draw_h = mode["height"] if encoder == "vaapi" else out_h
+            overlay = build_timestamp_filter(opts, draw_h, TIMESTAMP_FILE)
+            now = time.strftime("%d.%m.%Y %H:%M:%S")
+            log("info", f"Zeitstempel eingeblendet ({opts.get('timestamp_position')}), Zeitzone "
+                        f"{os.environ.get('TZ') or time.tzname[0]} – aktuell {now}")
 
         audio_in = None
         opus = caps.has_encoder("libopus")
@@ -869,7 +935,7 @@ def main() -> int:
 
         video_in = video_input_args(device["path"], mode, encoder)
         cmd = build_ffmpeg_command(video_in, audio_in, encoder, mode["width"], mode["height"],
-                                   out_w, out_h, mode["fps"], bitrate, opus)
+                                   out_w, out_h, mode["fps"], bitrate, opus, overlay)
         source = to_exec_source(cmd)
 
     config = build_go2rtc_config(opts, source)
