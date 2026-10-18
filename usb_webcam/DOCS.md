@@ -38,8 +38,10 @@ Standardmäßig nimmt die App die erste USB-Kamera. Bei mehreren Kameras im Tab 
 unten **„Nicht verwendete optionale Konfigurationsoptionen anzeigen“** einschalten und bei
 **Kamera** (`camera_device`) die gewünschte aus der Liste wählen.
 
-Pro Webcam gibt es meist zwei Einträge: `…-video-index0` (das Bild) und `…-video-index1`
-(nur Metadaten). Nimm **index0** – wählst du versehentlich index1, korrigiert die App das selbst.
+Die Liste zeigt alle Geräte des Systems. Nimm den Eintrag, der mit `/dev/v4l/by-id/` beginnt,
+den Namen deiner Webcam enthält und auf **`-video-index0`** endet
+(z. B. `/dev/v4l/by-id/usb-…_Webcam_…-video-index0`). `…-video-index1` liefert nur Metadaten –
+wählst du den oder ein anderes Gerät versehentlich, korrigiert die App das selbst.
 
 ## Datum und Uhrzeit im Bild
 

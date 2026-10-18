@@ -332,6 +332,10 @@ def select_device(option: str, probes: list[dict]) -> dict | None:
             return None
         if path != option:
             log("info", f"Ausgewähltes Gerät {option} -> {path}")
+        if not re.fullmatch(r"/dev/video\d+", path):
+            log("warning", f"{option} ist keine Kamera – wähle automatisch. Tipp: in der Liste den "
+                           "Eintrag '/dev/v4l/by-id/…-video-index0' nehmen")
+            return select_device("", probes)
         dev = next((p for p in probes if os.path.realpath(p["path"]) == path), None) or probe_device(path)
         if not is_capture_node(dev) or not dev["formats"]:
             sib = capture_sibling(dev, probes)

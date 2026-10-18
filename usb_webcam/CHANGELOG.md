@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+
+- Fix: App wurde im App-Store nicht mehr angezeigt (ungültiger Gerätefilter in der Konfiguration)
+- Wird in der Kamera-Auswahl ein Gerät gewählt, das keine Kamera ist, nimmt die App automatisch die Webcam
+
 ## 1.2.0
 
 - Neu: MJPEG-Modus wie bei MotionEye – das Bild der Kamera wird direkt weitergereicht. Volle 4K auch auf dem Raspberry Pi 4, in Home Assistant als "MJPEG IP Camera" (ohne Ton)

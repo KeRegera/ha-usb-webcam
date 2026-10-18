@@ -1,7 +1,7 @@
 configuration:
   camera_device:
     name: Camera
-    description: "Empty = automatic. Otherwise pick the camera (the 'video-index0' entry)"
+    description: "Empty = automatic. Otherwise pick /dev/v4l/by-id/…-video-index0 of your webcam"
   stream_mode:
     name: Mode
     description: "auto recommended. mjpeg = like MotionEye, full 4K even on a Raspberry Pi, no audio. h264 = with audio and WebRTC, needs more CPU"
