@@ -1019,6 +1019,13 @@ def cleanup_legacy_options() -> None:
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
+def camera_busy(device: str) -> bool:
+    """Eine USB-Kamera kann nur ein Programm gleichzeitig nutzen (z. B. MotionEye)."""
+    rc, out = run(["v4l2-ctl", "-d", device, "--stream-mmap", "--stream-count=1", "--stream-to=/dev/null"],
+                  timeout=15)
+    return rc != 0 and ("busy" in out.lower() or "ebusy" in out.lower())
+
+
 def apply_controls(device: str, controls: list[str]) -> None:
     for ctrl in controls or []:
         ctrl = str(ctrl).strip()
@@ -1198,6 +1205,13 @@ def main() -> int:
             log("error", "Keine nutzbare Kamera gefunden (siehe Liste oben)")
             return 1
         log("info", f"Verwende Kamera {device['path']}: {device['card']}")
+        if camera_busy(device["path"]):
+            log("error", "=" * 70)
+            log("error", f"Die Kamera {device['path']} wird gerade von einem anderen Programm benutzt "
+                         "(z. B. MotionEye, Frigate, eine andere App). Eine USB-Kamera kann nur EIN Programm "
+                         "gleichzeitig nutzen. Dort die Kamera entfernen bzw. die andere App stoppen und "
+                         "danach diese App neu starten.")
+            log("error", "=" * 70)
         for fcc, sizes in device["formats"].items():
             for (w, h), fpsl in sorted(sizes.items(), key=lambda x: -x[0][0] * x[0][1]):
                 log("debug", f"  {fcc} {w}x{h} @ {', '.join(f'{f:g}' for f in fpsl)} fps")

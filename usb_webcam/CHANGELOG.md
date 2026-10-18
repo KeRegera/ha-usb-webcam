@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- Neu: Warnung im Log, wenn die Kamera schon von einem anderen Programm (z. B. MotionEye) belegt ist
+
 ## 1.2.1
 
 - Fix: App wurde im App-Store nicht mehr angezeigt (ungültiger Gerätefilter in der Konfiguration)

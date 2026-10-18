@@ -100,6 +100,9 @@ Die Adressen stehen im Log der App.
 
 ## Fehlersuche
 
+- **Kein Bild / „wird gerade von einem anderen Programm benutzt“** → Eine USB-Kamera kann nur
+  ein Programm gleichzeitig nutzen. Läuft z. B. **MotionEye** mit derselben Kamera, dort die Kamera
+  entfernen oder MotionEye stoppen und diese App neu starten.
 - **"Keine /dev/video* Geräte gefunden"** → Kamera ab- und anstecken, App neu starten.
 - **Nur alle paar Sekunden ein neues Bild** → Karte auf Kameraansicht **Live** stellen.
 - **Kein Ton** → Ton gibt es nur mit `stream_mode: h264` (auf dem Pi dann max. 1080p).
