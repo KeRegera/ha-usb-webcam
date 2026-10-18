@@ -1,70 +1,19 @@
 configuration:
-  camera_device:
+  device:
     name: Kamera
-    description: "Leer = automatisch. Sonst aus der Liste den Eintrag /dev/v4l/by-id/…-video-index0 deiner Webcam wählen"
-  stream_mode:
-    name: Modus
-    description: "auto empfohlen. mjpeg = wie MotionEye: volle 4K auch auf dem Raspberry Pi, kein Ton. h264 = mit Ton und WebRTC, braucht viel Rechenleistung"
+    description: "Deine Webcam aus der Liste wählen: den Eintrag /dev/v4l/by-id/usb-…-video-index0"
   resolution:
-    name: Auflösung der Kamera
-    description: "auto = höchste Auflösung. Oder z. B. 3840x2160, 1920x1080, 4k, 1080p"
+    name: Auflösung
+    description: "Videoauflösung. Kann die Kamera sie nicht, wird die nächstkleinere genommen"
   fps:
     name: Bilder pro Sekunde
-    description: "Gewünschte Bildrate, z. B. 30 oder 60"
-  input_format:
-    name: Kameraformat
-    description: "auto empfohlen. h264 = kein Umkodieren nötig (falls die Kamera es kann), mjpeg = Standard bei 4K-Webcams"
-  encoder:
-    name: Encoder
-    description: "auto = beste Methode wählen. copy = H.264 der Kamera durchreichen, vaapi = Intel/AMD-Grafik, v4l2m2m = Raspberry Pi 4 (max. 1080p), software = CPU"
-  output_resolution:
-    name: Ausgabe-Auflösung
-    description: "source = wie Kamera. Zum Entlasten z. B. 1080p oder 1920x1080"
-  bitrate_mbps:
-    name: Bitrate (Mbit/s)
-    description: "0 = automatisch (4K30 ≈ 17, 4K60 ≈ 35, 1080p30 ≈ 4)"
-  audio:
-    name: Ton übertragen
-    description: Mikrofon der Kamera mitstreamen
-  audio_source:
-    name: Audioquelle
-    description: "Leer = automatisch (USB-Mikrofon). Namen stehen im Log der App"
-  camera_name:
-    name: Name der Kamera
-    description: "Name der Entität in Home Assistant (z. B. 'USB Webcam' -> camera.usb_webcam)"
-  stream_name:
-    name: Stream-Name
-    description: "Name des Streams in go2rtc / in der RTSP-Adresse"
-  auto_register:
-    name: Automatisch in Home Assistant anlegen
-    description: Legt die Kamera einmalig als Generic-Camera-Entität an
-  always_on:
-    name: Kamera dauerhaft aktiv
-    description: "Stream läuft immer (sofortiger Start, aber dauerhafte Last). Aus = startet nur beim Ansehen"
-  v4l2_controls:
-    name: Kamera-Einstellungen (V4L2)
-    description: "z. B. power_line_frequency=1 (50 Hz, gegen Flimmern), focus_automatic_continuous=1"
-  rtsp_username:
-    name: RTSP-Benutzer
-    description: Optional, nur wenn Port 8554 nach außen freigegeben ist
-  rtsp_password:
-    name: RTSP-Passwort
-    description: Optional, nur wenn Port 8554 nach außen freigegeben ist
-  custom_ffmpeg_command:
-    name: Eigener ffmpeg-Befehl
-    description: "Nur für Experten. Ersetzt die Automatik komplett. Muss mit '-f rtsp {output}' enden"
+    description: "Framerate, z. B. 30"
   timestamp:
     name: Datum und Uhrzeit einblenden
-    description: "Brennt Datum/Uhrzeit ins Videobild – steht damit auch in jeder Aufnahme und jedem Standbild"
+    description: "Steht dann auch in Aufnahmen und Standbildern. Kostet auf dem Raspberry Pi Bilder pro Sekunde"
   timestamp_position:
-    name: Position des Zeitstempels
+    name: Position von Datum und Uhrzeit
     description: "top_left = oben links, top_right = oben rechts, bottom_left = unten links, bottom_right = unten rechts"
-  timestamp_format:
-    name: Format des Zeitstempels
-    description: "Standard %d.%m.%Y %H:%M:%S -> 17.10.2026 20:49:05. Mit %a z. B. auch den Wochentag"
-  log_level:
-    name: Log-Level
-    description: "debug zeigt alle Kameramodi und die erzeugte Konfiguration"
-network:
-  8554/tcp: RTSP-Stream (VLC, Frigate, …)
-  1984/tcp: go2rtc Weboberfläche / API
+  camera_name:
+    name: Kameraname
+    description: "Name in Home Assistant, z. B. 'USB Webcam' -> camera.usb_webcam"

@@ -1,70 +1,19 @@
 configuration:
-  camera_device:
+  device:
     name: Camera
-    description: "Empty = automatic. Otherwise pick /dev/v4l/by-id/…-video-index0 of your webcam"
-  stream_mode:
-    name: Mode
-    description: "auto recommended. mjpeg = like MotionEye, full 4K even on a Raspberry Pi, no audio. h264 = with audio and WebRTC, needs more CPU"
+    description: "Pick your webcam from the list: /dev/v4l/by-id/usb-…-video-index0"
   resolution:
-    name: Camera resolution
-    description: "auto = highest. Or e.g. 3840x2160, 1920x1080, 4k, 1080p"
+    name: Resolution
+    description: "If the camera does not support it, the next smaller one is used"
   fps:
     name: Frames per second
-    description: "Desired frame rate, e.g. 30 or 60"
-  input_format:
-    name: Camera format
-    description: "auto recommended. h264 = no re-encoding needed (if supported), mjpeg = typical for 4K webcams"
-  encoder:
-    name: Encoder
-    description: "auto = pick best. copy = pass camera H.264 through, vaapi = Intel/AMD GPU, v4l2m2m = Raspberry Pi 4 (max 1080p), software = CPU"
-  output_resolution:
-    name: Output resolution
-    description: "source = same as camera. To reduce load e.g. 1080p"
-  bitrate_mbps:
-    name: Bitrate (Mbit/s)
-    description: "0 = automatic"
-  audio:
-    name: Stream audio
-    description: Include the camera microphone
-  audio_source:
-    name: Audio source
-    description: "Empty = automatic (USB microphone). Names are shown in the app log"
-  camera_name:
-    name: Camera name
-    description: Entity name in Home Assistant
-  stream_name:
-    name: Stream name
-    description: Stream name in go2rtc / RTSP URL
-  auto_register:
-    name: Create camera in Home Assistant
-    description: Creates a Generic Camera entity once
-  always_on:
-    name: Keep camera always on
-    description: "Instant start but permanent load. Off = start on demand"
-  v4l2_controls:
-    name: Camera controls (V4L2)
-    description: "e.g. power_line_frequency=1 (50 Hz anti-flicker)"
-  rtsp_username:
-    name: RTSP username
-    description: Optional, only if port 8554 is exposed
-  rtsp_password:
-    name: RTSP password
-    description: Optional, only if port 8554 is exposed
-  custom_ffmpeg_command:
-    name: Custom ffmpeg command
-    description: "Experts only. Replaces auto detection. Must end with '-f rtsp {output}'"
+    description: "Frame rate, e.g. 30"
   timestamp:
     name: Show date and time
-    description: Burns date/time into the video so it is part of every recording and snapshot
+    description: "Also part of recordings and snapshots. Costs frame rate on a Raspberry Pi"
   timestamp_position:
-    name: Timestamp position
+    name: Date/time position
     description: "top_left, top_right, bottom_left, bottom_right"
-  timestamp_format:
-    name: Timestamp format
-    description: "strftime format, default %d.%m.%Y %H:%M:%S"
-  log_level:
-    name: Log level
-    description: "debug shows all camera modes and the generated config"
-network:
-  8554/tcp: RTSP stream (VLC, Frigate, …)
-  1984/tcp: go2rtc web UI / API
+  camera_name:
+    name: Camera name
+    description: "Name in Home Assistant, e.g. 'USB Webcam' -> camera.usb_webcam"

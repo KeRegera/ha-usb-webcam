@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0 – Neuaufbau
+
+- Komplett neu und deutlich einfacher, nach dem Prinzip von MotionEye: Das MJPEG-Bild der Kamera
+  wird direkt weitergereicht (volle 4K auch auf dem Raspberry Pi)
+- Kamera wird im Konfigurations-Tab aus einer Liste gewählt (Pflichtfeld, immer sichtbar)
+- Nur noch sechs Einstellungen: Kamera, Auflösung, Bilder/s, Datum/Uhrzeit an/aus, Position, Name
+- Keine eigene Oberfläche mehr, kein Ton
+- Kamera läuft dauerhaft – sofort Bild, Standbilder immer aktuell
+- Prüft beim Start, ob die Kamera von einem anderen Programm (z. B. MotionEye) belegt ist
+- Kamera-Einträge früherer Versionen werden in Home Assistant automatisch ersetzt
+
 ## 1.2.2
 
 - Neu: Warnung im Log, wenn die Kamera schon von einem anderen Programm (z. B. MotionEye) belegt ist

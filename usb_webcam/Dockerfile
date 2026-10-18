@@ -7,26 +7,16 @@ ARG GO2RTC_SHA256_AMD64=32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323
 ARG GO2RTC_SHA256_ARM64=359fabade8a7a51e81a55fe6df6b0ef81764a5e1d63179577534eaaa71904b50
 ARG TARGETARCH
 
-# Pflicht: ffmpeg (inkl. VAAPI / V4L2-M2M / libx264 / libopus), V4L2-Tools, Python
+# ffmpeg, V4L2-Tools, Python
 RUN apk add --no-cache ffmpeg v4l-utils python3 \
     && command -v v4l2-ctl \
     && ffmpeg -hide_banner -version > /dev/null
 
-# Schrift für die Datum/Uhrzeit-Einblendung
-RUN apk add --no-cache font-dejavu || apk add --no-cache ttf-dejavu || echo "Hinweis: keine DejaVu-Schrift"
+# Optional: Schrift für Datum/Uhrzeit, WebSocket zum Umbenennen der Entität
+RUN apk add --no-cache font-dejavu || apk add --no-cache ttf-dejavu || echo "Hinweis: keine DejaVu-Schrift"; \
+    apk add --no-cache py3-websocket-client || echo "Hinweis: py3-websocket-client nicht verfügbar"
 
-# Optional: PulseAudio-Client (Mikrofon-Erkennung), WebSocket (Entität umbenennen),
-# Intel/AMD-VAAPI-Treiber (nur x86_64). Fehlt eins, läuft die App trotzdem.
-RUN for pkg in pulseaudio-utils alsa-plugins-pulse py3-websocket-client; do \
-        apk add --no-cache "${pkg}" || echo "Hinweis: ${pkg} nicht verfügbar"; \
-    done \
-    && if [ "$(apk --print-arch)" = "x86_64" ]; then \
-        for pkg in intel-media-driver libva-intel-driver mesa-va-gallium; do \
-            apk add --no-cache "${pkg}" || echo "Hinweis: ${pkg} nicht verfügbar"; \
-        done; \
-    fi
-
-# go2rtc (Streaming-Server: RTSP, WebRTC, MSE, Snapshots)
+# go2rtc (MJPEG-Stream + Standbilder)
 RUN arch="${TARGETARCH:-$(apk --print-arch)}" \
     && case "${arch}" in \
         amd64|x86_64) go_arch="amd64"; sha="${GO2RTC_SHA256_AMD64}" ;; \
@@ -45,5 +35,5 @@ CMD [ "/run.sh" ]
 
 LABEL \
     org.opencontainers.image.title="Home Assistant App: USB Webcam" \
-    org.opencontainers.image.description="USB-Webcam (bis 4K, mit Ton) als Kamera-Entität in Home Assistant" \
+    org.opencontainers.image.description="USB-Webcam (bis 4K) als Kamera in Home Assistant" \
     org.opencontainers.image.licenses="MIT"

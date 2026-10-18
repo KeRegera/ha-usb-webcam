@@ -1,8 +1,8 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 name: USB Webcam
-version: "1.2.2"
+version: "2.0.0"
 slug: usb_webcam
-description: USB-Webcam (bis 4K) als normale Kamera-Entität in Home Assistant – wie MotionEye oder mit Ton
+description: USB-Webcam (bis 4K) als Kamera in Home Assistant – wie MotionEye, mit Datum/Uhrzeit im Bild
 url: "https://github.com/KeRegera/ha-usb-webcam/tree/main/usb_webcam"
 arch:
   - aarch64
@@ -11,73 +11,24 @@ init: false
 startup: application
 boot: auto
 
-# Zugriff auf /dev/video* und /dev/dri (Hardware-Encoder) + Audio-System von HA
+# Zugriff auf die Webcam
 video: true
-audio: true
 
-# Supervisor-/Core-API für die automatische Einrichtung der Kamera-Entität
+# Für das automatische Anlegen der Kamera in Home Assistant
 hassio_api: true
 homeassistant_api: true
 
-# go2rtc-Weboberfläche direkt in der Seitenleiste / im App-Tab "Web-UI öffnen"
-ingress: true
-ingress_port: 1984
-panel_icon: mdi:webcam
-panel_title: USB Webcam
-
-# Optional nach außen freigeben (standardmäßig aus, damit nichts mit Frigate & Co. kollidiert)
-ports:
-  8554/tcp: null
-  1984/tcp: null
-ports_description:
-  8554/tcp: RTSP-Stream (z. B. für VLC, Frigate, Blue Iris)
-  1984/tcp: go2rtc Weboberfläche und API
-
 options:
-  stream_mode: auto
-  resolution: auto
+  resolution: "3840x2160"
   fps: 30
-  input_format: auto
-  encoder: auto
-  output_resolution: source
-  bitrate_mbps: 0
-  audio: true
-  audio_source: ""
-  camera_name: USB Webcam
-  stream_name: webcam
-  auto_register: true
-  always_on: false
-  v4l2_controls:
-    - power_line_frequency=1
-  rtsp_username: ""
-  rtsp_password: ""
-  custom_ffmpeg_command: ""
   timestamp: true
   timestamp_position: top_left
-  timestamp_format: "%d.%m.%Y %H:%M:%S"
-  log_level: info
+  camera_name: USB Webcam
 
 schema:
-  camera_device: device?
-  stream_mode: list(auto|mjpeg|h264)
-  resolution: str
-  fps: int(5,60)
-  input_format: list(auto|h264|mjpeg|nv12|yuyv422)
-  encoder: list(auto|copy|vaapi|v4l2m2m|software)
-  output_resolution: str
-  bitrate_mbps: int(0,80)
-  audio: bool
-  audio_source: str?
-  camera_name: str
-  stream_name: match(^[A-Za-z0-9_-]+$)
-  auto_register: bool
-  always_on: bool
-  v4l2_controls:
-    - str?
-  rtsp_username: str?
-  rtsp_password: password?
-  custom_ffmpeg_command: str?
+  device: device
+  resolution: list(3840x2160|2560x1440|1920x1080|1280x720|640x480)
+  fps: int(1,60)
   timestamp: bool
   timestamp_position: list(top_left|top_right|bottom_left|bottom_right)
-  timestamp_format: str
-  log_level: list(debug|info|warning|error)
+  camera_name: str
