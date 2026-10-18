@@ -3,11 +3,13 @@
 
 Ablauf beim Start:
   1. USB-Kamera (V4L2) finden und ihre Formate/Auflösungen/FPS auslesen
-  2. Bestes Eingangsformat + Encoder wählen (H.264-Passthrough, VAAPI, Raspberry-Pi-HW, Software)
-  3. Mikrofon der Kamera über PulseAudio finden
-  4. go2rtc mit einem ffmpeg-Stream (H.264 + AAC + Opus) starten
-  5. Kamera einmalig als "Generic Camera"-Integration in Home Assistant anlegen
-     -> normale camera.* Entität mit WebRTC (Ton, volle FPS) im Dashboard
+  2. Modus wählen:
+     - MJPEG: Bild der Kamera direkt weiterreichen (wie MotionEye) – volle 4K auch
+       auf dem Raspberry Pi, kein Ton. In HA als "MJPEG IP Camera".
+     - H.264: Kodieren (Passthrough, VAAPI, Raspberry-Pi-HW, Software) mit Ton
+       (AAC + Opus). In HA als "Generic Camera" mit WebRTC.
+  3. go2rtc mit einem ffmpeg-Stream starten
+  4. Kamera einmalig in Home Assistant anlegen -> normale camera.* Entität
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import platform
 import re
 import signal
 import socket
@@ -32,6 +35,8 @@ STATE_PATH = os.environ.get("USBCAM_STATE", "/data/state.json")
 GO2RTC_CONFIG = os.environ.get("USBCAM_GO2RTC_CONFIG", "/tmp/go2rtc.yaml")
 GO2RTC_BIN = os.environ.get("USBCAM_GO2RTC_BIN", "go2rtc")
 TIMESTAMP_FILE = os.environ.get("USBCAM_TIMESTAMP_FILE", "/tmp/usb_webcam_timestamp.txt")
+BENCH_PATH = os.environ.get("USBCAM_BENCH", "/data/benchmark.json")
+SYSFS_V4L = os.environ.get("USBCAM_SYSFS_V4L", "/sys/class/video4linux")
 SUPERVISOR_URL = os.environ.get("USBCAM_SUPERVISOR_URL", "http://supervisor")
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
@@ -40,7 +45,8 @@ RTSP_PORT = 8554
 WEBRTC_PORT = 8555
 
 DEFAULTS = {
-    "video_device": "auto",
+    "camera_device": "",
+    "stream_mode": "auto",
     "resolution": "auto",
     "fps": 30,
     "input_format": "auto",
@@ -120,6 +126,11 @@ def load_options() -> dict:
             opts.update({k: v for k, v in json.load(fh).items() if v is not None})
     except FileNotFoundError:
         log("warning", f"{OPTIONS_PATH} fehlt – nutze Standardwerte")
+    # Bis 1.1.0 hieß die Option "video_device" (Freitext) – weiterhin auswerten
+    legacy = str(opts.pop("video_device", "") or "").strip()
+    if not opts.get("camera_device") and legacy and legacy != "auto":
+        opts["camera_device"] = legacy
+    opts["camera_device"] = str(opts.get("camera_device") or "").strip()
     opts["stream_name"] = re.sub(r"[^a-zA-Z0-9_-]", "_", str(opts["stream_name"])) or "webcam"
     opts["fps"] = int(opts["fps"])
     return opts
@@ -243,12 +254,92 @@ def list_video_nodes() -> list[str]:
     return sorted(glob.glob("/dev/video*"), key=num)
 
 
+def _read(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def sysfs_nodes() -> dict[str, dict]:
+    """/dev/videoN -> {index, usb (USB-Geräteordner), iface (Interface-Ordner), serial, product}."""
+    nodes = {}
+    for entry in glob.glob(os.path.join(SYSFS_V4L, "video*")):
+        name = os.path.basename(entry)
+        iface = os.path.realpath(os.path.join(entry, "device"))
+        usb = os.path.dirname(iface)
+        nodes["/dev/" + name] = {
+            "index": _read(os.path.join(entry, "index")) or "0",
+            "iface": os.path.basename(iface),
+            "usb": usb,
+            "serial": _read(os.path.join(usb, "serial")),
+            "product": _read(os.path.join(usb, "product")),
+            "manufacturer": _read(os.path.join(usb, "manufacturer")),
+        }
+    return nodes
+
+
+def resolve_device_path(option: str) -> str | None:
+    """Wandelt die Auswahl aus den App-Optionen in /dev/videoN um.
+
+    Die Auswahlliste von Home Assistant liefert Pfade wie
+    /dev/v4l/by-id/usb-<Hersteller>_<Modell>_<Seriennr>-video-index0, die es im
+    Container nicht immer gibt – dann über /sys auflösen.
+    """
+    if os.path.exists(option):
+        return os.path.realpath(option)
+    base = os.path.basename(option)
+    nodes = sysfs_nodes()
+    m = re.search(r"-video-index(\d+)$", base)
+    index = m.group(1) if m else None
+
+    m_path = re.search(r"-usb(?:v\d)?-\d+:([\d.]+):(\d+\.\d+)-video-index\d+$", base)
+    for dev, info in sorted(nodes.items()):
+        if index is not None and info["index"] != index:
+            continue
+        if m_path and info["iface"].endswith(f"-{m_path.group(1)}:{m_path.group(2)}"):
+            return dev
+        if "/by-id/" in option or base.startswith("usb-"):
+            serial = info["serial"]
+            if serial and f"_{serial}-video-index" in base:
+                return dev
+            label = re.sub(r"\s+", "_", f"{info['manufacturer']}_{info['product']}")
+            if info["product"] and label and label in base:
+                return dev
+    return None
+
+
+def capture_sibling(dev: dict, probes: list[dict]) -> dict | None:
+    """Gleiches USB-Gerät, aber der Knoten mit dem Videobild (index0 statt Metadaten)."""
+    nodes = sysfs_nodes()
+    usb = nodes.get(dev["path"], {}).get("usb")
+    if not usb:
+        return None
+    for other in probes:
+        if other["path"] != dev["path"] and nodes.get(other["path"], {}).get("usb") == usb \
+                and is_capture_node(other) and other["formats"]:
+            return other
+    return None
+
+
 def select_device(option: str, probes: list[dict]) -> dict | None:
     if option and option != "auto":
-        path = os.path.realpath(option)
+        path = resolve_device_path(option)
+        if not path:
+            log("error", f"Ausgewähltes Gerät {option} nicht gefunden. Ist die Kamera eingesteckt? "
+                         "Nach dem Einstecken die App neu starten.")
+            return None
+        if path != option:
+            log("info", f"Ausgewähltes Gerät {option} -> {path}")
         dev = next((p for p in probes if os.path.realpath(p["path"]) == path), None) or probe_device(path)
-        if not dev["formats"]:
-            log("error", f"{option} liefert keine Videoformate (falsches Gerät?)")
+        if not is_capture_node(dev) or not dev["formats"]:
+            sib = capture_sibling(dev, probes)
+            if sib:
+                log("warning", f"{path} liefert kein Videobild (Metadaten-Knoten) – nehme {sib['path']} "
+                               "derselben Kamera. Tipp: in der Auswahl den Eintrag mit 'index0' wählen.")
+                return sib
+            log("error", f"{path} liefert keine Videoformate (falsches Gerät? Eintrag mit 'index0' wählen)")
             return None
         return dev
     candidates = [p for p in probes if is_capture_node(p) and p["formats"]]
@@ -258,9 +349,6 @@ def select_device(option: str, probes: list[dict]) -> dict | None:
     return candidates[0]
 
 
-# --------------------------------------------------------------------------- #
-# Modus- und Encoder-Wahl
-# --------------------------------------------------------------------------- #
 def best_fps(fps_list: list[float], wanted: int) -> float:
     if not fps_list:
         return float(wanted)  # Gerät meldet keine Intervalle -> anfordern, was gewünscht ist
@@ -361,16 +449,64 @@ def test_encoder(enc: str, width: int, height: int, fps: float) -> tuple[bool, s
     return rc == 0, out.strip()[-300:]
 
 
+def cached_measure(key: str, fn) -> float:
+    """Messwerte in /data merken – die Messung kostet auf dem Pi sonst bei jedem Start Zeit."""
+    key = f"{platform.machine()}-{os.cpu_count()}:{key}"
+    try:
+        with open(BENCH_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        data = {}
+    if key in data:
+        return float(data[key])
+    value = float(fn())
+    if value > 0:
+        data[key] = round(value, 1)
+        try:
+            with open(BENCH_PATH, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=1)
+        except OSError:
+            pass
+    return value
+
+
 def benchmark_software(width: int, height: int, fps: float, bitrate: int) -> float:
-    frames = max(30, int(round(fps)) * 3)
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
-           f"testsrc2=size={width}x{height}:rate={max(1, round(fps))}", "-frames:v", str(frames),
-           "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-           "-b:v", f"{bitrate}M", "-f", "null", "-"]
-    start = time.monotonic()
-    rc, _ = run(cmd, timeout=120)
-    elapsed = time.monotonic() - start
-    return frames / elapsed if rc == 0 and elapsed > 0 else 0.0
+    def measure() -> float:
+        frames = max(15, int(round(fps * 1.5)))
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"testsrc2=size={width}x{height}:rate={max(1, round(fps))}", "-frames:v", str(frames),
+               "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+               "-b:v", f"{bitrate}M", "-f", "null", "-"]
+        start = time.monotonic()
+        rc, _ = run(cmd, timeout=120)
+        elapsed = time.monotonic() - start
+        return frames / elapsed if rc == 0 and elapsed > 0 else 0.0
+
+    return cached_measure(f"x264:{width}x{height}@{fps:g}:{bitrate}", measure)
+
+
+def benchmark_mjpeg_overlay(width: int, height: int, overlay: str) -> float:
+    """Wie schnell kann das Gerät MJPEG dekodieren + Zeitstempel zeichnen + neu kodieren?"""
+    def measure() -> float:
+        sample = f"/tmp/usb_webcam_bench_{width}x{height}.mjpeg"
+        rc, _ = run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                     f"testsrc2=size={width}x{height}:rate=10", "-frames:v", "10", "-pix_fmt", "yuvj422p",
+                     "-c:v", "mjpeg", "-q:v", "5", sample], timeout=120)
+        if rc != 0:
+            return 0.0
+        frames = 30
+        start = time.monotonic()
+        rc, _ = run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-stream_loop", "2", "-i", sample,
+                     "-vf", overlay, "-c:v", "mjpeg", "-q:v", "5", "-threads", "0", "-f", "null", "-"],
+                    timeout=180)
+        elapsed = time.monotonic() - start
+        try:
+            os.remove(sample)
+        except OSError:
+            pass
+        return frames / elapsed if rc == 0 and elapsed > 0 else 0.0
+
+    return cached_measure(f"mjpeg-ts:{width}x{height}", measure)
 
 
 def choose_encoder(opt: str, mode: dict, out_w: int, out_h: int, caps: FFmpegCaps, bitrate: int,
@@ -546,7 +682,7 @@ def build_ffmpeg_command(video_in: list[str], audio_in: list[str] | None, encode
     elif encoder == "v4l2m2m":
         vf = (f"scale={out_w}:{out_h}:flags=fast_bilinear," if scale else "") + ov + "format=yuv420p"
         cmd += ["-vf", vf, "-c:v", "h264_v4l2m2m", "-num_output_buffers", "32",
-                "-num_capture_buffers", "16", "-g", gop, *rate]
+                "-num_capture_buffers", "16", "-g", gop, *rate, "-bsf:v", "dump_extra=freq=keyframe"]
     else:
         vf = (f"scale={out_w}:{out_h}:flags=fast_bilinear," if scale else "") + ov + "format=yuv420p"
         cmd += ["-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -562,6 +698,24 @@ def build_ffmpeg_command(video_in: list[str], audio_in: list[str] | None, encode
             cmd += ["-c:a:1", "libopus", "-b:a:1", "64k"]
         cmd += ["-ar", "48000", "-ac", "2"]
     cmd += ["-f", "rtsp", "-rtsp_transport", "tcp", "{output}"]
+    return cmd
+
+
+def build_mjpeg_command(device: str, mode: dict, overlay: str | None, out_fps: float) -> list[str]:
+    """MJPEG wie MotionEye: Bilder der Kamera direkt weiterreichen (kaum CPU-Last).
+    Nur mit Zeitstempel bzw. reduzierter Bildrate wird dekodiert und neu kodiert."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats",
+           *video_input_args(device, mode, "software")]
+    filters = []
+    if out_fps + 0.5 < mode["fps"]:
+        filters.append(f"fps={out_fps:g}")
+    if overlay:
+        filters.append(overlay)
+    if filters:
+        cmd += ["-vf", ",".join(filters), "-c:v", "mjpeg", "-q:v", "5", "-threads", "0"]
+    else:
+        cmd += ["-c:v", "copy"]
+    cmd += ["-an", "-f", "mjpeg", "-"]  # Pipe zu go2rtc (stdout)
     return cmd
 
 
@@ -750,25 +904,34 @@ def ws_rename(entry_id: str, title: str) -> None:
         ws.close()
 
 
-def ensure_registration(opts: dict, still_url: str, stream_url: str) -> None:
-    values = {
-        "still_image_url": still_url,
-        "stream_source": stream_url,
-        "framerate": 2,
-        "verify_ssl": False,
-        "rtsp_transport": "tcp",
-        "authentication": "basic",
-        "confirmed_ok": True,
-    }
-    desired = {"still_image_url": still_url, "stream_source": stream_url}
-    state = load_state()
-    entries = ha_api("GET", "/config/config_entries/entry?domain=generic") or []
-    entry_ids = {e.get("entry_id") for e in entries}
-    entry_id = state.get("entry_id")
+INTEGRATION_LABEL = {"generic": "Generic Camera", "mjpeg": "MJPEG IP Camera"}
 
-    if entry_id in entry_ids:
+
+def registration_spec(stream_mode: str, opts: dict, host: str, cred: str) -> tuple[str, dict, dict]:
+    """(Integration, Formularwerte, zu merkende URLs) je nach Modus."""
+    name = opts["stream_name"]
+    still = f"http://{host}:{API_PORT}/api/frame.jpeg?src={name}"
+    if stream_mode == "mjpeg":
+        mjpeg = f"http://{host}:{API_PORT}/api/stream.mjpeg?src={name}"
+        values = {"name": opts["camera_name"], "mjpeg_url": mjpeg, "still_image_url": still,
+                  "username": "", "password": "", "verify_ssl": False}
+        return "mjpeg", values, {"mjpeg_url": mjpeg, "still_image_url": still}
+    stream = f"rtsp://{cred}{host}:{RTSP_PORT}/{name}?video&audio=all"
+    values = {"still_image_url": still, "stream_source": stream, "framerate": 2, "verify_ssl": False,
+              "rtsp_transport": "tcp", "authentication": "basic", "confirmed_ok": True}
+    return "generic", values, {"still_image_url": still, "stream_source": stream}
+
+
+def ensure_registration(opts: dict, domain: str, values: dict, desired: dict) -> None:
+    state = load_state()
+    entries = {e.get("entry_id"): e.get("domain") for e in (ha_api("GET", "/config/config_entries/entry") or [])}
+    entry_id = state.get("entry_id")
+    old_domain = state.get("domain", "generic")  # bis 1.1.0 gab es nur Generic Camera
+    label = INTEGRATION_LABEL.get(domain, domain)
+
+    if entry_id in entries and entries[entry_id] == domain and old_domain == domain:
         if state.get("urls") == desired:
-            log("info", "Kamera ist bereits in Home Assistant eingerichtet")
+            log("info", f"Kamera ist bereits in Home Assistant eingerichtet ({label})")
             return
         log("info", "Stream-Adresse hat sich geändert – aktualisiere die Kamera in Home Assistant")
         run_flow("/config/config_entries/options/flow", {"handler": entry_id},
@@ -777,22 +940,32 @@ def ensure_registration(opts: dict, still_url: str, stream_url: str) -> None:
         save_state(state)
         return
 
-    if entry_id:
+    if entry_id in entries:
+        # Moduswechsel (z. B. H.264 -> MJPEG): alten, von der App angelegten Eintrag ersetzen
+        log("info", f"Modus geändert – ersetze {INTEGRATION_LABEL.get(entries[entry_id], entries[entry_id])} "
+                    f"durch {label} (Entität behält ihren Namen)")
+        ha_api("DELETE", f"/config/config_entries/entry/{entry_id}")
+        time.sleep(2)
+    elif entry_id:
         log("info", "Kamera-Eintrag wurde in Home Assistant gelöscht – lege ihn neu an "
                     "(auto_register ausschalten, falls unerwünscht)")
-    log("info", "Lege Kamera in Home Assistant an (Generic Camera) …")
-    result = run_flow("/config/config_entries/flow", {"handler": "generic", "show_advanced_options": False},
+    log("info", f"Lege Kamera in Home Assistant an ({label}) …")
+    before = set(entries)
+    result = run_flow("/config/config_entries/flow", {"handler": domain, "show_advanced_options": False},
                       "/config/config_entries/flow/", values)
+    if result.get("type") == "abort" and result.get("reason") == "already_configured":
+        log("info", f"Diese Kamera ist in Home Assistant bereits als {label} vorhanden")
+        return
     if result.get("type") != "create_entry":
         raise RuntimeError(f"Einrichtung abgebrochen: {result.get('reason') or result}")
     new_id = (result.get("result") or {}).get("entry_id") if isinstance(result.get("result"), dict) else None
     if not new_id:
-        after = ha_api("GET", "/config/config_entries/entry?domain=generic") or []
-        fresh = [e for e in after if e.get("entry_id") not in entry_ids]
+        after = ha_api("GET", f"/config/config_entries/entry?domain={domain}") or []
+        fresh = [e for e in after if e.get("entry_id") not in before]
         new_id = fresh[0]["entry_id"] if fresh else None
     if not new_id:
         raise RuntimeError("Eintrag angelegt, aber ID nicht gefunden")
-    save_state({"entry_id": new_id, "urls": desired})
+    save_state({"entry_id": new_id, "domain": domain, "urls": desired})
     log("info", "Kamera erfolgreich in Home Assistant angelegt")
     try:
         ws_rename(new_id, opts["camera_name"])
@@ -811,18 +984,32 @@ def wait_for_go2rtc(timeout: float = 60) -> bool:
     return False
 
 
-def registration_worker(opts: dict, still_url: str, stream_url: str) -> None:
+def registration_worker(opts: dict, domain: str, values: dict, desired: dict) -> None:
     if not wait_for_go2rtc():
         log("error", "go2rtc API antwortet nicht – keine automatische Einrichtung")
         return
     for attempt in range(1, 6):
         try:
-            ensure_registration(opts, still_url, stream_url)
+            ensure_registration(opts, domain, values, desired)
             return
         except Exception as err:  # noqa: BLE001
             log("warning", f"Automatische Einrichtung fehlgeschlagen (Versuch {attempt}/5): {err}")
             time.sleep(20 * attempt)
     log("error", "Automatische Einrichtung aufgegeben – Kamera bitte manuell anlegen (siehe Doku)")
+
+
+def cleanup_legacy_options() -> None:
+    """Alte Option "video_device" aus den gespeicherten Optionen entfernen (sonst Warnung im Supervisor-Log)."""
+    try:
+        info = supervisor_request("GET", "/addons/self/info", timeout=15).get("data") or {}
+        stored = dict(info.get("options") or {})
+        if "video_device" not in stored:
+            return
+        stored.pop("video_device")
+        supervisor_request("POST", "/addons/self/options", {"options": stored}, timeout=15)
+        log("debug", "Alte Option video_device entfernt")
+    except Exception as err:  # noqa: BLE001
+        log("debug", f"Alte Option nicht entfernt: {err}")
 
 
 # --------------------------------------------------------------------------- #
@@ -840,6 +1027,140 @@ def apply_controls(device: str, controls: list[str]) -> None:
             log("warning", f"Kamera-Einstellung {ctrl} nicht möglich: {out.strip()[:150]}")
 
 
+def setup_audio(opts: dict, device: dict, caps: FFmpegCaps, env: dict) -> list[str] | None:
+    if not opts["audio"]:
+        return None
+    opus = caps.has_encoder("libopus")
+    sources = pulse_sources()
+    log("info", f"Audioquellen: {', '.join(sources) or 'keine'}")
+    src = pick_audio_source(opts["audio_source"], sources, pulse_default_source(), device["card"])
+    if not src:
+        log("warning", "Kein Mikrofon gefunden – Stream ohne Ton. Tipp: im Tab "
+                       "'Konfiguration' > 'Audio' der App das Kamera-Mikrofon als Eingang wählen.")
+        return None
+    args = audio_input_args(src, caps, env)
+    ok, err = test_audio(args, env)
+    if not ok:
+        log("warning", f"Mikrofon {src} nicht nutzbar ({err}) – Stream ohne Ton")
+        return None
+    log("info", f"Ton: {src} -> AAC" + (" + Opus" if opus else ""))
+    return args
+
+
+def log_timestamp(opts: dict) -> None:
+    now = time.strftime("%d.%m.%Y %H:%M:%S")
+    log("info", f"Zeitstempel eingeblendet ({opts.get('timestamp_position')}), Zeitzone "
+                f"{os.environ.get('TZ') or time.tzname[0]} – aktuell {now}")
+
+
+def plan_h264(opts: dict, device: dict, caps: FFmpegCaps, resolution: str):
+    overlay_on = bool(opts.get("timestamp"))
+    # Mit Einblendung wird ohnehin neu kodiert -> MJPEG bevorzugen (billiger zu dekodieren)
+    mode_enc = "software" if overlay_on and opts["encoder"] in ("auto", "copy") else opts["encoder"]
+    m = choose_mode(device["formats"], resolution, opts["fps"], opts["input_format"], mode_enc)
+    res = parse_resolution(opts["output_resolution"]) if opts["output_resolution"] != "source" else None
+    ow, oh = res or (m["width"], m["height"])
+    if ow * oh > m["width"] * m["height"]:
+        ow, oh = m["width"], m["height"]
+    ow, oh = ow - ow % 2, oh - oh % 2
+    br = int(opts["bitrate_mbps"]) or auto_bitrate(ow, oh, m["fps"])
+    enc, fast = choose_encoder(opts["encoder"], m, ow, oh, caps, br, overlay_on)
+    return m, ow, oh, br, enc, fast
+
+
+def setup_h264(opts: dict, device: dict, caps: FFmpegCaps, env: dict, plan=None) -> str:
+    mode, out_w, out_h, bitrate, encoder, fast = plan or plan_h264(opts, device, caps, opts["resolution"])
+    if (not fast and opts["resolution"] == "auto" and opts["output_resolution"] == "source"
+            and mode["width"] * mode["height"] > 1920 * 1080):
+        log("warning", f"{mode['width']}x{mode['height']} ist für dieses Gerät zu viel – "
+                       "wechsle automatisch auf 1080p (mit resolution/output_resolution änderbar)")
+        mode, out_w, out_h, bitrate, encoder, fast = plan_h264(opts, device, caps, "1920x1080")
+    if not fast:
+        log("warning", "Stream wird ruckeln/verzögern! Abhilfe: stream_mode mjpeg, resolution verkleinern "
+                       "(z. B. 1080p/720p), fps reduzieren oder Zeitstempel ausschalten.")
+    log("info", f"Kameramodus: {mode['fourcc']} {mode['width']}x{mode['height']} @ {mode['fps']:g} fps")
+    log("info", f"Video: {encoder} -> H.264 {out_w}x{out_h} @ {mode['fps']:g} fps"
+                + ("" if encoder == "copy" else f", {bitrate} Mbit/s"))
+    overlay = None
+    if opts.get("timestamp"):
+        # Bei VAAPI wird vor dem Skalieren gezeichnet (Eingangsgröße), sonst danach
+        draw_h = mode["height"] if encoder == "vaapi" else out_h
+        overlay = build_timestamp_filter(opts, draw_h, TIMESTAMP_FILE)
+        log_timestamp(opts)
+    audio_in = setup_audio(opts, device, caps, env)
+    video_in = video_input_args(device["path"], mode, encoder)
+    cmd = build_ffmpeg_command(video_in, audio_in, encoder, mode["width"], mode["height"],
+                               out_w, out_h, mode["fps"], bitrate, caps.has_encoder("libopus"), overlay)
+    return to_exec_source(cmd)
+
+
+def setup_mjpeg(opts: dict, device: dict, mjpeg_formats: dict) -> str:
+    mode = choose_mode(mjpeg_formats, opts["resolution"], opts["fps"], "auto", "software")
+    w, h = mode["width"], mode["height"]
+    out_fps = mode["fps"]
+    overlay = None
+    if opts.get("timestamp"):
+        overlay = build_timestamp_filter(opts, h, TIMESTAMP_FILE)
+        log("info", f"Messe, wie schnell der Zeitstempel bei {w}x{h} eingeblendet werden kann …")
+        speed = benchmark_mjpeg_overlay(w, h, overlay)
+        if speed and speed < mode["fps"] * 0.95:
+            # Beste Kombination aus Kamera-fps und ausgegebenen fps suchen. Dekodiert wird jedes
+            # Kamerabild (~1/3 der Arbeit), kodiert nur die ausgegebenen (~2/3).
+            fps_list = mjpeg_formats.get(mode["fourcc"], {}).get((w, h), []) or [mode["fps"]]
+            best = (0.0, min(fps_list))
+            for cam in sorted(fps_list):
+                if cam <= mode["fps"] + 0.5:
+                    out = cam if cam <= speed * 0.85 else float(int((speed * 0.85 - cam / 3) * 1.5))
+                    out = min(out, cam)
+                    if out > best[0]:
+                        best = (out, cam)
+            if best[0] >= 1:
+                out_fps, cam_fps = best
+            else:  # Kamera kann nicht langsamer -> stark drosseln
+                out_fps, cam_fps = max(1.0, float(int(speed * 0.5))), min(fps_list)
+            mode = dict(mode, fps=cam_fps)
+            log("warning", f"Zeitstempel bei {w}x{h}: dieses Gerät schafft ca. {speed:.0f} fps – Stream läuft "
+                           f"mit {out_fps:g} fps. Für volle {opts['fps']} fps: timestamp aus (dann ohne "
+                           "Neukodierung) oder resolution verkleinern.")
+        elif speed:
+            log("info", f"Zeitstempel bei {w}x{h}: ca. {speed:.0f} fps möglich")
+        log_timestamp(opts)
+    if opts["output_resolution"] != "source":
+        log("info", "output_resolution gilt nur im H.264-Modus – im MJPEG-Modus resolution verwenden")
+    if opts["audio"]:
+        log("info", "MJPEG-Modus: Bild ohne Ton (wie bei MotionEye). Ton gibt es mit stream_mode: h264")
+    log("info", f"Kameramodus: {mode['fourcc']} {w}x{h} @ {mode['fps']:g} fps")
+    log("info", f"Video: MJPEG {w}x{h} @ {out_fps:g} fps "
+                + ("(neu kodiert mit Zeitstempel)" if overlay else "(direkt von der Kamera, keine Last)"))
+    return to_exec_source(build_mjpeg_command(device["path"], mode, overlay, out_fps))
+
+
+def setup_stream(opts: dict, device: dict, caps: FFmpegCaps, env: dict) -> tuple[str, str]:
+    """Wählt MJPEG oder H.264 und liefert (modus, go2rtc-Quelle)."""
+    mjpeg_formats = {f: sz for f, sz in device["formats"].items() if f in ("MJPG", "JPEG") and sz}
+    want = opts["stream_mode"]
+    if want == "mjpeg" and not mjpeg_formats:
+        log("warning", "Kamera liefert kein MJPEG – nutze H.264-Modus")
+        want = "h264"
+    plan = None
+    if want == "auto":
+        if not mjpeg_formats:
+            want = "h264"
+        else:
+            plan = plan_h264(opts, device, caps, opts["resolution"])
+            m, ow, oh, _br, enc, fast = plan
+            if fast and enc != "v4l2m2m":
+                want = "h264"
+                log("info", f"Modus: H.264 ({enc}) – Gerät schafft {ow}x{oh} @ {m['fps']:g} fps, mit Ton")
+            else:
+                want = "mjpeg"
+                log("info", "Modus: MJPEG (wie MotionEye) – H.264-Kodierung in voller Auflösung ist auf "
+                            "diesem Gerät nicht flüssig möglich. Mit stream_mode: h264 erzwingbar.")
+    if want == "mjpeg":
+        return "mjpeg", setup_mjpeg(opts, device, mjpeg_formats)
+    return "h264", setup_h264(opts, device, caps, env, plan)
+
+
 def main() -> int:
     global _log_level
     opts = load_options()
@@ -852,6 +1173,7 @@ def main() -> int:
             log("error", "custom_ffmpeg_command muss {output} enthalten (Ziel: -f rtsp {output})")
             return 1
         source = "exec:" + custom + "#killsignal=15#killtimeout=5"
+        stream_mode = "h264"
         log("info", "Nutze eigenen ffmpeg-Befehl (automatische Erkennung übersprungen)")
     else:
         nodes = list_video_nodes()
@@ -867,7 +1189,7 @@ def main() -> int:
                 for f in p["formats"] if p["formats"][f]
             ) or "-"
             log("info", f"Gefunden: {p['path']} [{p['driver'] or '?'}] {p['card'] or ''} – {fmt}")
-        device = select_device(opts["video_device"], probes)
+        device = select_device(opts["camera_device"], probes)
         if not device:
             log("error", "Keine nutzbare Kamera gefunden (siehe Liste oben)")
             return 1
@@ -877,66 +1199,8 @@ def main() -> int:
                 log("debug", f"  {fcc} {w}x{h} @ {', '.join(f'{f:g}' for f in fpsl)} fps")
 
         apply_controls(device["path"], opts["v4l2_controls"])
-        overlay_on = bool(opts.get("timestamp"))
-        # Mit Einblendung wird ohnehin neu kodiert -> MJPEG bevorzugen (billiger zu dekodieren)
-        mode_enc = "software" if overlay_on and opts["encoder"] in ("auto", "copy") else opts["encoder"]
         caps = FFmpegCaps()
-
-        def plan(resolution: str):
-            m = choose_mode(device["formats"], resolution, opts["fps"], opts["input_format"], mode_enc)
-            res = parse_resolution(opts["output_resolution"]) if opts["output_resolution"] != "source" else None
-            ow, oh = res or (m["width"], m["height"])
-            if ow * oh > m["width"] * m["height"]:
-                ow, oh = m["width"], m["height"]
-            ow, oh = ow - ow % 2, oh - oh % 2
-            br = int(opts["bitrate_mbps"]) or auto_bitrate(ow, oh, m["fps"])
-            enc, fast = choose_encoder(opts["encoder"], m, ow, oh, caps, br, overlay_on)
-            return m, ow, oh, br, enc, fast
-
-        mode, out_w, out_h, bitrate, encoder, fast = plan(opts["resolution"])
-        if (not fast and opts["resolution"] == "auto" and opts["output_resolution"] == "source"
-                and mode["width"] * mode["height"] > 1920 * 1080):
-            log("warning", f"{mode['width']}x{mode['height']} ist für dieses Gerät zu viel – "
-                           "wechsle automatisch auf 1080p (mit resolution/output_resolution änderbar)")
-            mode, out_w, out_h, bitrate, encoder, fast = plan("1920x1080")
-        if not fast:
-            log("warning", "Stream wird ruckeln/verzögern! Abhilfe: resolution oder output_resolution "
-                           "verkleinern (z. B. 1080p/720p), fps reduzieren oder Zeitstempel ausschalten.")
-        log("info", f"Kameramodus: {mode['fourcc']} {mode['width']}x{mode['height']} @ {mode['fps']:g} fps")
-        log("info", f"Video: {encoder} -> H.264 {out_w}x{out_h} @ {mode['fps']:g} fps"
-                    + ("" if encoder == "copy" else f", {bitrate} Mbit/s"))
-
-        overlay = None
-        if overlay_on:
-            # Bei VAAPI wird vor dem Skalieren gezeichnet (Eingangsgröße), sonst danach
-            draw_h = mode["height"] if encoder == "vaapi" else out_h
-            overlay = build_timestamp_filter(opts, draw_h, TIMESTAMP_FILE)
-            now = time.strftime("%d.%m.%Y %H:%M:%S")
-            log("info", f"Zeitstempel eingeblendet ({opts.get('timestamp_position')}), Zeitzone "
-                        f"{os.environ.get('TZ') or time.tzname[0]} – aktuell {now}")
-
-        audio_in = None
-        opus = caps.has_encoder("libopus")
-        if opts["audio"]:
-            sources = pulse_sources()
-            log("info", f"Audioquellen: {', '.join(sources) or 'keine'}")
-            src = pick_audio_source(opts["audio_source"], sources, pulse_default_source(), device["card"])
-            if src:
-                args = audio_input_args(src, caps, env)
-                ok, err = test_audio(args, env)
-                if ok:
-                    audio_in = args
-                    log("info", f"Ton: {src} -> AAC" + (" + Opus" if opus else ""))
-                else:
-                    log("warning", f"Mikrofon {src} nicht nutzbar ({err}) – Stream ohne Ton")
-            else:
-                log("warning", "Kein Mikrofon gefunden – Stream ohne Ton. Tipp: im Tab "
-                               "'Konfiguration' > 'Audio' der App das Kamera-Mikrofon als Eingang wählen.")
-
-        video_in = video_input_args(device["path"], mode, encoder)
-        cmd = build_ffmpeg_command(video_in, audio_in, encoder, mode["width"], mode["height"],
-                                   out_w, out_h, mode["fps"], bitrate, opus, overlay)
-        source = to_exec_source(cmd)
+        stream_mode, source = setup_stream(opts, device, caps, env)
 
     config = build_go2rtc_config(opts, source)
     with open(GO2RTC_CONFIG, "w", encoding="utf-8") as fh:
@@ -944,15 +1208,13 @@ def main() -> int:
     log("debug", f"go2rtc-Konfiguration:\n{json.dumps(config, indent=2)}")
 
     host = own_address()
-    name = opts["stream_name"]
     cred = ""
     if opts.get("rtsp_username") and opts.get("rtsp_password"):
         cred = (urllib.parse.quote(opts["rtsp_username"], safe="") + ":"
                 + urllib.parse.quote(opts["rtsp_password"], safe="") + "@")
-    still_url = f"http://{host}:{API_PORT}/api/frame.jpeg?src={name}"
-    stream_url = f"rtsp://{cred}{host}:{RTSP_PORT}/{name}?video&audio=all"
-    log("info", f"RTSP-Stream (intern): rtsp://{host}:{RTSP_PORT}/{name}")
-    log("info", f"Standbild (intern):   {still_url}")
+    domain, values, desired = registration_spec(stream_mode, opts, host, cred)
+    for key, url in desired.items():
+        log("info", f"{key:<16} (intern): {url}")
 
     proc = subprocess.Popen([GO2RTC_BIN, "-config", GO2RTC_CONFIG], env=env)
 
@@ -966,9 +1228,11 @@ def main() -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    if TOKEN:
+        threading.Thread(target=cleanup_legacy_options, daemon=True).start()
     if opts["auto_register"]:
         if TOKEN:
-            threading.Thread(target=registration_worker, args=(opts, still_url, stream_url), daemon=True).start()
+            threading.Thread(target=registration_worker, args=(opts, domain, values, desired), daemon=True).start()
         else:
             log("warning", "Kein SUPERVISOR_TOKEN – automatische Einrichtung nicht möglich")
 

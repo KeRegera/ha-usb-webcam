@@ -1,8 +1,8 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 name: USB Webcam
-version: "1.1.0"
+version: "1.2.0"
 slug: usb_webcam
-description: USB-Webcam (bis 4K, 30/60 fps, mit Ton) als normale Kamera-Entität in Home Assistant
+description: USB-Webcam (bis 4K) als normale Kamera-Entität in Home Assistant – wie MotionEye oder mit Ton
 url: "https://github.com/KeRegera/ha-usb-webcam/tree/main/usb_webcam"
 arch:
   - aarch64
@@ -34,7 +34,7 @@ ports_description:
   1984/tcp: go2rtc Weboberfläche und API
 
 options:
-  video_device: auto
+  stream_mode: auto
   resolution: auto
   fps: 30
   input_format: auto
@@ -58,7 +58,8 @@ options:
   log_level: info
 
 schema:
-  video_device: str
+  camera_device: device(subsystem=video4linux)?
+  stream_mode: list(auto|mjpeg|h264)
   resolution: str
   fps: int(5,60)
   input_format: list(auto|h264|mjpeg|nv12|yuyv422)

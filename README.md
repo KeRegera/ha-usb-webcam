@@ -6,7 +6,7 @@
 
 ### [USB Webcam](./usb_webcam)
 
-USB-Webcam (bis 4K, 30/60 fps, mit Ton) als normale Kamera-Entität in Home Assistant.
+USB-Webcam (bis 4K) als normale Kamera-Entität in Home Assistant – wie MotionEye (MJPEG, volle 4K auch auf dem Pi) oder als H.264 mit Ton.
 
 ## Installation
 

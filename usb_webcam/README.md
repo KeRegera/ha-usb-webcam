@@ -1,9 +1,11 @@
 # Home Assistant App: USB Webcam
 
-USB-Webcam (bis 4K, 30/60 fps, mit Ton) als normale Kamera-Entität in Home Assistant.
+USB-Webcam (bis 4K) als normale Kamera-Entität in Home Assistant.
 
 ![aarch64][aarch64-shield] ![amd64][amd64-shield]
 
+- MJPEG-Modus wie MotionEye: volle 4K auch auf dem Raspberry Pi
+- Kamera aus einer Liste auswählen, Datum/Uhrzeit im Bild
 - Automatische Erkennung von Kamera, Formaten und Mikrofon
 - H.264-Passthrough, Intel/AMD-VAAPI, Raspberry-Pi-Hardware-Encoder oder Software
 - WebRTC im Dashboard mit voller Bildrate und Ton

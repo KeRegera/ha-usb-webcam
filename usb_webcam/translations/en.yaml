@@ -1,7 +1,10 @@
 configuration:
-  video_device:
-    name: Video device
-    description: "auto = detect camera automatically, otherwise e.g. /dev/video0"
+  camera_device:
+    name: Camera
+    description: "Empty = automatic. Otherwise pick the camera (the 'video-index0' entry)"
+  stream_mode:
+    name: Mode
+    description: "auto recommended. mjpeg = like MotionEye, full 4K even on a Raspberry Pi, no audio. h264 = with audio and WebRTC, needs more CPU"
   resolution:
     name: Camera resolution
     description: "auto = highest. Or e.g. 3840x2160, 1920x1080, 4k, 1080p"
